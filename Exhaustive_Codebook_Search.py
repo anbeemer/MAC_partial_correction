@@ -33,6 +33,7 @@
 
 
 import numpy as np
+import pandas as pd
 import math
 from itertools import chain, combinations, product
 import time
@@ -82,110 +83,53 @@ def binomialcoef(j,k):
     return math.factorial(j)/(math.factorial(k)*math.factorial(j-k))
 
 
-n = 5 #This sets the block length.
-
-codewords = []
-adversary_words = []
-
-width = int(binomialcoef(n,np.ceil(n/2)))
-
-for z in range(2**n):
-    codewords.append(int(np.binary_repr(z)))
-    adversary_words.append(int(np.binary_repr(z)))
-
-
-timer = TimeChecker()
-
-
-# Since this is the first time we called .print_elapsed_time(), the counter is at (0)
-# (0) --- #### seconds ---
-timer.print_elapsed_time()
-
-codewords.pop(2**n-1)
-codewords.pop(0)
-adversary_words.pop(0)
-
-# (1)
-timer.print_elapsed_time()
-
-codebooks = []
-codebooks = list(powerset(codewords, width))
-codebookpairs = []
-
-# 2
-timer.print_elapsed_time()
-
-# this is called a "list comprehension"
-# They can be quite a bit faster than .append in a for loop
-a = [j * j for j in range(5)]
-b = []
-for j in range(5):
-    b.append(j * j)
-a == b
-
-
-# compute pairs [A, B] of subsets of `codewords` such that A and B are disjoint
-# where |A| and |B| are between 2 and width 
-### Questions for Duncan:
-##   > Can we instead generate subsets C of `codewords` and 
-##   > then here compute the list [A, B] of all ways of writing C = A U B, A n B = 0?
-##   > So, first we'd handle all subsets C of size 4. They produce some disjoint pairs [A, B], 
-##   > and [A, B] doesn't appear in any other subset C of size 4.
-##   > Then, move on to |C| = 5, |C| = 6, etc.
-codebookpairs = [ 
-    [codebooks[i], codebooks[x]]
-    for i in tqdm(range(len(codebooks)))
-    for x in range(i+1,len(codebooks))
+def generate_words(n, adv=False):
+    #Generates all possible codewords and adversary words of length n
+    #Excludes all 0 from both, all 1's from codewords due to support constraints
     
-    ## it's faster to check it this way than in the commented out way
-    ## but this is still O(N^2), N = len(codebooks) since pairwise-check
-    if len(codebooks[i]) + len(codebooks[x]) == len(set(codebooks[i] + codebooks[x]))
-    ## This check happens to be 33% slower, but it's still O(N^2)
-    # if len(set(codebooks[i]).intersection(set(codebooks[x]))) == 0
-
-]
-# i = 0
-# while len(codebooks) > i:
-#     print(i, "//", len(codebooks))
-#     for x in range(i+1,len(codebooks)):
-#         pairs = []
-#         if len(set(codebooks[i]).intersection(set(codebooks[x]))) == 0:
-#             pairs.append(codebooks[i])
-#             pairs.append(codebooks[x])
-#             codebookpairs.append(pairs)
-#     print(len(pairs))
-#     i = i+1
-
-# 3
-timer.print_elapsed_time()
+    words = [int(np.binary_repr(z)) for z in range(2**n)]
     
-adversarial_sums = []
-potential_sums = []
-codebooks_12 =[]
+    if not adv:
+        words.pop(2**n-1)
+        
+    words.pop(0)
 
-Bs = []
-Cs = []
-partially_correctable_codebooks =[]
-coords = []
+    return words
 
-print("big loop start")
-for a in tqdm(range(len(codebookpairs))):
-    for Q in list(product(codebookpairs[a][0], codebookpairs[a][1], adversary_words)):
+
+#given a codebook pair and adversarial options, check whether the codebook is good for partial correction
+def good_pair_check(cb1, cb2, n):
+    #cb1, cb2, adv are lists of binary words of binary length n (possibly with leading 0's)
+    
+    #generate all adversary words of length n
+    adv = generate_words(n, adv=True)
+    
+    adversarial_sums = []
+    potential_sums = []
+    
+    coords = []
+    
+    
+    for Q in list(product(cb1, cb2, adv)):
         potential_sums.append(Q[0]+Q[1])
         adversarial_sums.append(Q[0]+Q[1]+Q[2])
         coords.append([Q[0],Q[1]])
+        
     potential_sums_set = set(potential_sums)
     adversarial_sums_set = set(adversarial_sums)
     unique_sums = unique(potential_sums)
-    if len(potential_sums_set.intersection(adversarial_sums_set)) == 0 \
-            and (2**n-1)*len(unique_sums) == len(potential_sums):
+    
+    
+    #Check that non-adversarial and adversarial sums have no intersection
+    #Also double check that each sum pair is unique within the no-adversary set
+    if (len(potential_sums_set.intersection(adversarial_sums_set)) == 0) \
+            and len(unique_sums) == len(cb1)*len(cb2):
         unique_adversarial_sums = unique(adversarial_sums)
-        check = 1
-        index = 0
-        # when adversary does act, get repeated sums,
-        # track sum back to 1 of the 2 code books.
-        # eg 112 comes out, meaning (adversary contrib) + (codebook 1 contrib) + (codebook 2 contrib)
-        while check == 1 and index < len(unique_adversarial_sums):
+
+        # Check that repeated outputs all match on at least one of the two codewords
+        for index in range(len(unique_adversarial_sums)):
+            Bs = []
+            Cs = []
             j = unique_adversarial_sums[index]
             for k in range(len(adversarial_sums)):
                 if adversarial_sums[k] == j:
@@ -193,37 +137,95 @@ for a in tqdm(range(len(codebookpairs))):
                     Cs.append(coords[k][1])
             uBs = unique(Bs)
             uCs = unique(Cs)
-            if len(uBs) > 1 and len(uCs) > 1:
-                check = 0
-            Bs = []
-            Cs = []
-            index = index + 1
-        if check == 1:
+            if (len(uBs) > 1) and (len(uCs) > 1):
+                return False
+        return True
+    return False
+
+
+
+def generate_good_codebooks(n):
+    #Generates all good codebook pairs with block length n
+    
+    timer = TimeChecker()
+    
+    # Since this is the first time we called .print_elapsed_time(), the counter is at (0)
+    # (0) --- #### seconds ---
+    timer.print_elapsed_time()
+
+
+    codewords = generate_words(n)
+    
+
+    width = int(binomialcoef(n,np.ceil(n/2)))
+    
+    # (1)
+    timer.print_elapsed_time()
+    
+    codebooks = list(powerset(codewords, width))
+    codebookpairs = []
+    
+    # 2
+    timer.print_elapsed_time()
+    
+    
+    # compute pairs [A, B] of subsets of `codewords` such that A and B are disjoint
+    # where |A| and |B| are between 2 and width 
+    ### Questions for Duncan:
+    ##   > Can we instead generate subsets C of `codewords` and 
+    ##   > then here compute the list [A, B] of all ways of writing C = A U B, A n B = 0?
+    ##   > So, first we'd handle all subsets C of size 4. They produce some disjoint pairs [A, B], 
+    ##   > and [A, B] doesn't appear in any other subset C of size 4.
+    ##   > Then, move on to |C| = 5, |C| = 6, etc.
+    codebookpairs = [ 
+        [codebooks[i], codebooks[x]]
+        for i in tqdm(range(len(codebooks)))
+        for x in range(i+1,len(codebooks))
+        
+        ## it's faster to check it this way than in the commented out way
+        ## but this is still O(N^2), N = len(codebooks) since pairwise-check
+        if len(codebooks[i]) + len(codebooks[x]) == len(set(codebooks[i] + codebooks[x]))
+        ## This check happens to be 33% slower, but it's still O(N^2)
+        # if len(set(codebooks[i]).intersection(set(codebooks[x]))) == 0
+    
+    ]
+    # i = 0
+    # while len(codebooks) > i:
+    #     print(i, "//", len(codebooks))
+    #     for x in range(i+1,len(codebooks)):
+    #         pairs = []
+    #         if len(set(codebooks[i]).intersection(set(codebooks[x]))) == 0:
+    #             pairs.append(codebooks[i])
+    #             pairs.append(codebooks[x])
+    #             codebookpairs.append(pairs)
+    #     print(len(pairs))
+    #     i = i+1
+    
+    # 3
+    timer.print_elapsed_time()
+        
+    
+    partially_correctable_codebooks =[]
+    
+#################################
+    print("big loop start")
+    for a in tqdm(range(len(codebookpairs))):
+        if good_pair_check(codebookpairs[a][0], codebookpairs[a][1], n):
             partially_correctable_codebooks.append(codebookpairs[a])
-    partial_sums=[]
-    coords=[]
-    adversarial_sums = []
-    potential_sums = []
+            
+        
+    
+    print("--- %s seconds ---" % (timer.elapsed_time()))
+    print('\n')
+    print(len(partially_correctable_codebooks))
+    print("Codebooks that are partially correctable for block length "+ str(n))
+    # print(partially_correctable_codebooks)
+    
+    
+    df = pd.DataFrame(partially_correctable_codebooks)
+    df.to_csv(f'Good_Codebooks_len_{n}.csv', index=True)
+    return partially_correctable_codebooks, len(partially_correctable_codebooks), timer.elapsed_time()
 
-print("--- %s seconds ---" % (timer.elapsed_time()))
-print('\n')
-print(len(partially_correctable_codebooks))
-print("Codebooks that are partially correctable for block length "+ str(n))
-# print(partially_correctable_codebooks)
-
-import pandas as pd
-
-df = pd.DataFrame(partially_correctable_codebooks)
-df.to_csv('Good_Codebooks.csv', index=True)
-
-
-# In[4]:
-
-
-
-
-
-# In[ ]:
 
 
 
